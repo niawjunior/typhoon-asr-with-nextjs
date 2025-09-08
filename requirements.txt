@@ -1,6 +1,7 @@
 fastapi
-uvicorn
+uvicorn[standard]
 python-multipart
+websockets
 typhoon-asr
 openai
 pydub

@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, FC, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Card,
@@ -17,7 +16,299 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Mic, Upload, Info } from "lucide-react";
+import { Loader2, Mic, Upload, Info, FileAudio } from "lucide-react";
+
+// HTTP Streaming Transcription component
+interface HttpStreamingTranscriptionProps {
+  apiKey: string;
+  useApi: boolean;
+  device: string;
+  showTimestamps: boolean;
+}
+
+const HttpStreamingTranscription: FC<HttpStreamingTranscriptionProps> = ({
+  apiKey,
+  useApi,
+  device,
+  showTimestamps,
+}) => {
+  const [isRecording, setIsRecording] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [transcription, setTranscription] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState("idle");
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Process audio chunks periodically during recording
+  const processAudioChunks = useCallback(async () => {
+    if (audioChunksRef.current.length === 0) return;
+
+    try {
+      // Create a blob from the current audio chunks
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" });
+
+      // Create form data
+      const formData = new FormData();
+      formData.append(
+        "file",
+        new File([audioBlob], "recording.wav", { type: "audio/wav" })
+      );
+      formData.append("api_key", apiKey);
+      formData.append("use_api", useApi.toString());
+      formData.append("device", device);
+      formData.append("with_timestamps", showTimestamps.toString());
+
+      // Make streaming request
+      const response = await fetch("http://localhost:8000/stream-transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Get the reader from the response body stream
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+
+      // Read the stream
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          console.log("Stream complete");
+          break;
+        }
+
+        // Decode the chunk
+        const chunk = decoder.decode(value, { stream: true });
+        console.log("Received chunk:", chunk);
+
+        // Process each line in the chunk
+        const lines = chunk.split("\n").filter((line) => line.trim());
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+
+            if (data.status === "error") {
+              setError(data.message);
+              break;
+            } else if (data.status === "complete" && data.result) {
+              setTranscription(data.result.text || "");
+            }
+          } catch (e) {
+            console.error("Error parsing JSON:", e, line);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error processing audio chunks:", err);
+      // Don't set error during recording to avoid interrupting the user
+      if (!isRecording) {
+        setError(
+          err instanceof Error ? err.message : "An unknown error occurred"
+        );
+      }
+    }
+  }, [apiKey, useApi, device, showTimestamps, isRecording]);
+
+  // Start recording audio with real-time transcription
+  const startRecording = async () => {
+    try {
+      setError(null);
+      setTranscription("");
+      audioChunksRef.current = [];
+      setAudioBlob(null);
+      setIsStreaming(true);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: "audio/wav",
+        });
+        setAudioBlob(audioBlob);
+
+        // Final transcription with the complete audio
+        try {
+          await processAudioChunks();
+        } finally {
+          // Always reset status to idle after processing is complete
+          setStatus("idle");
+        }
+      };
+
+      mediaRecorder.start(300); // Collect data every 300ms for more frequent chunks
+      setIsRecording(true);
+      setStatus("recording");
+
+      // Start periodic processing of audio chunks
+      processingIntervalRef.current = setInterval(() => {
+        processAudioChunks();
+      }, 1000); // Process every 1.5 seconds for near real-time experience
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "An unknown error occurred"
+      );
+      setIsRecording(false);
+      setIsStreaming(false);
+    }
+  };
+
+  // Stop recording
+  const stopRecording = () => {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
+      mediaRecorderRef.current.stop();
+
+      // Stop all audio tracks
+      if (mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream
+          .getTracks()
+          .forEach((track) => track.stop());
+      }
+
+      // Clear the processing interval
+      if (processingIntervalRef.current) {
+        clearInterval(processingIntervalRef.current);
+        processingIntervalRef.current = null;
+      }
+
+      setIsRecording(false);
+      setStatus("processing");
+
+      // Reset status to idle after a short delay to allow final processing
+      setTimeout(() => {
+        setStatus("idle");
+      }, 2000);
+    }
+  };
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      // Stop recording if active
+      if (
+        mediaRecorderRef.current &&
+        mediaRecorderRef.current.state !== "inactive"
+      ) {
+        mediaRecorderRef.current.stop();
+        if (mediaRecorderRef.current.stream) {
+          mediaRecorderRef.current.stream
+            .getTracks()
+            .forEach((track) => track.stop());
+        }
+      }
+
+      // Clear the processing interval
+      if (processingIntervalRef.current) {
+        clearInterval(processingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col items-center justify-center">
+        <div className="mb-4">
+          {isRecording ? (
+            <div className="p-6 rounded-full bg-red-100 animate-pulse">
+              <Mic className="h-12 w-12 text-red-500" />
+            </div>
+          ) : isStreaming ? (
+            <div className="p-6 rounded-full bg-blue-100 animate-pulse">
+              <FileAudio className="h-12 w-12 text-blue-500" />
+            </div>
+          ) : (
+            <div className="p-6 rounded-full bg-muted">
+              <Mic className="h-12 w-12 text-muted-foreground" />
+            </div>
+          )}
+        </div>
+
+        <div className="flex space-x-2">
+          {isRecording ? (
+            <Button onClick={stopRecording} variant="destructive">
+              Stop Recording
+            </Button>
+          ) : status === "processing" ? (
+            <Button disabled className="bg-blue-500">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Processing...
+            </Button>
+          ) : (
+            <Button
+              onClick={startRecording}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              <Mic className="mr-2 h-4 w-4" />
+              Start Recording
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {status === "recording" && !error && (
+        <div className="flex items-center justify-center p-4 bg-red-50 rounded-md">
+          <Mic className="mr-2 h-4 w-4 text-red-500" />
+          Recording in progress...
+        </div>
+      )}
+
+      {status === "streaming" && !error && (
+        <div className="flex items-center justify-center p-4 bg-muted rounded-md">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Streaming transcription...
+        </div>
+      )}
+
+      {audioBlob && (
+        <div className="mt-4">
+          <audio
+            src={URL.createObjectURL(audioBlob)}
+            controls
+            className="w-full"
+          />
+        </div>
+      )}
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {transcription && (
+        <div className="space-y-2">
+          <h3 className="text-lg font-medium">Transcription</h3>
+
+          <Textarea
+            className="min-h-[100px] text-lg"
+            readOnly
+            value={transcription}
+            placeholder="Final transcription will appear here..."
+          />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function Home() {
   // State for API key and mode
@@ -236,9 +527,10 @@ export default function Home() {
         {/* Main content */}
         <div className="md:col-span-2 space-y-6">
           <Tabs defaultValue="upload">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="upload">Upload Audio</TabsTrigger>
               <TabsTrigger value="record">Record Audio</TabsTrigger>
+              <TabsTrigger value="http-stream">HTTP Stream</TabsTrigger>
             </TabsList>
 
             {/* Upload Tab */}
@@ -375,6 +667,25 @@ export default function Home() {
                     )}
                   </Button>
                 </CardFooter>
+              </Card>
+            </TabsContent>
+            {/* HTTP Streaming Tab */}
+            <TabsContent value="http-stream" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>HTTP Streaming Transcription</CardTitle>
+                  <CardDescription>
+                    Upload audio for streaming transcription via HTTP
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <HttpStreamingTranscription
+                    apiKey={apiKey}
+                    useApi={useApi}
+                    device={device}
+                    showTimestamps={showTimestamps}
+                  />
+                </CardContent>
               </Card>
             </TabsContent>
           </Tabs>

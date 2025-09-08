@@ -7,13 +7,18 @@ A Next.js and FastAPI demo application for Typhoon ASR - Thai speech recognition
 - Upload audio files for transcription
 - Record audio directly from your microphone
 - Real-time Thai speech recognition
+- Real-time streaming transcription with WebSockets
 - Word-level timestamp visualization
 - Support for multiple audio formats (.wav, .mp3, .flac, .ogg, .opus)
-- Two operation modes:
+- Three operation modes:
+  - Upload: Process pre-recorded audio files
+  - Record: Record and then transcribe audio
+  - Stream: Real-time transcription as you speak
+- Two backend options:
   - API mode (using Typhoon's cloud service)
   - Local mode (self-hosted, requires typhoon-asr package)
 - Modern UI with Next.js frontend
-- FastAPI backend for audio processing
+- FastAPI backend with WebSocket support
 
 ## Project Structure
 
@@ -126,9 +131,21 @@ Get your API key from the [Typhoon Web Playground](https://opentyphoon.ai/)
 
 The FastAPI backend provides the following endpoints:
 
+### REST Endpoints
+
 - `GET /` - Root endpoint, returns a welcome message
 - `GET /health` - Health check endpoint
 - `POST /transcribe` - Transcribe audio file
+
+### WebSocket Endpoint
+
+- `ws://localhost:8000/ws/transcribe` - Real-time streaming transcription
+
+The WebSocket endpoint accepts:
+- Binary audio data chunks
+- Control messages as JSON strings:
+  - Configuration: `{"type": "config", "api_key": "your-api-key", "use_api": true, "device": "auto", "with_timestamps": false}`
+  - End signal: `{"type": "end"}`
 
 API documentation is available at http://localhost:8000/docs when the backend is running.
 
