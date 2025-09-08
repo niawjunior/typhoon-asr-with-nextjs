@@ -33,23 +33,27 @@ A Next.js and FastAPI demo application for Typhoon ASR - Thai speech recognition
 ### Backend Setup
 
 1. Clone this repository:
+
 ```bash
-git clone https://github.com/yourusername/typhoon-asr.git
-cd typhoon-asr
+git clone https://github.com/niawjunior/typhoon-asr-with-nextjs.git
+cd typhoon-asr-with-nextjs
 ```
 
 2. Create and activate a virtual environment using uv (recommended):
+
 ```bash
 uv venv
 source .venv/bin/activate
 ```
 
 3. Install Python dependencies using uv:
+
 ```bash
 uv pip install -r requirements.txt
 ```
 
 4. (Optional) If you want to use the local model:
+
 ```bash
 uv pip install typhoon-asr
 ```
@@ -57,11 +61,13 @@ uv pip install typhoon-asr
 ### Frontend Setup
 
 1. Navigate to the web directory:
+
 ```bash
 cd web
 ```
 
 2. Install Node.js dependencies:
+
 ```bash
 npm install
 # or
@@ -69,6 +75,7 @@ yarn install
 ```
 
 3. Create a `.env.local` file in the web directory with your API key (optional):
+
 ```
 NEXT_PUBLIC_API_KEY=your-typhoon-api-key
 ```
@@ -76,11 +83,13 @@ NEXT_PUBLIC_API_KEY=your-typhoon-api-key
 ## Usage
 
 1. Start the FastAPI backend:
+
 ```bash
 python main.py
 ```
 
 2. In a separate terminal, start the Next.js frontend:
+
 ```bash
 cd web
 npm run dev
@@ -91,6 +100,7 @@ yarn dev
 3. Open your browser and navigate to http://localhost:3000
 
 4. Choose your preferred transcription mode:
+
    - API mode: Uses Typhoon's cloud service (requires API key)
    - Local mode: Processes audio on your device (requires typhoon-asr package)
 
@@ -103,6 +113,7 @@ yarn dev
 You can configure the API key in two ways:
 
 1. **Environment Variable**: Add your API key to the `.env.local` file in the web directory:
+
    ```
    NEXT_PUBLIC_API_KEY=your-typhoon-api-key
    ```
