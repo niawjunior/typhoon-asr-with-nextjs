@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-multipart
+typhoon-asr
+openai
+pydub
+numpy
