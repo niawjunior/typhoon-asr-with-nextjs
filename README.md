@@ -1,4 +1,13 @@
+
 # Typhoon ASR Demo
+
+https://github.com/user-attachments/assets/1cd1e7fc-87ab-4cd1-8915-c0928bd1866c
+
+
+https://github.com/user-attachments/assets/14af2e52-b6bd-4e10-8c0a-c3fcacd17e0f
+
+
+
 
 A Next.js and FastAPI demo application for Typhoon ASR - Thai speech recognition in real-time.
 
