@@ -1,16 +1,14 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import tempfile
 import os
 import time
 import json
-import asyncio
-from typing import Dict, List, Optional, Any, Generator
+from typing import Dict, Generator
 import uvicorn
 from openai import OpenAI
 import shutil
-import wave
 import numpy as np
 
 # Try to import typhoon_asr, but don't fail if it's not available
@@ -137,187 +135,6 @@ def transcribe_with_local_model(audio_path: str, device: str = "auto", with_time
     except Exception as e:
         return {"error": str(e)}
 
-# WebSocket connection manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def send_json(self, websocket: WebSocket, data: Dict):
-        await websocket.send_json(data)
-
-manager = ConnectionManager()
-
-# WebSocket endpoint for real-time streaming transcription
-@app.websocket("/ws/transcribe")
-async def websocket_transcribe(websocket: WebSocket):
-    print("WebSocket connection attempt received")
-    audio_path = None
-    interim_path = None
-    
-    try:
-        await manager.connect(websocket)
-        print("WebSocket connected successfully")
-        
-        # Initial setup message
-        await manager.send_json(websocket, {"status": "connected", "message": "Ready for audio streaming"})
-        
-        # Create a temporary file for audio chunks
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            audio_path = tmp_file.name
-        
-        # Initialize variables for audio processing
-        audio_chunks = []
-        sample_rate = 16000  # Default sample rate
-        channels = 1  # Mono
-        sample_width = 2  # 16-bit
-        
-        # Default configuration
-        api_key = ""
-        use_api = True
-        device = "auto"
-        with_timestamps = False
-        
-        # Process incoming messages
-        while True:
-            try:
-                data = await websocket.receive_bytes()
-                
-                # Try to decode as text (for JSON control messages)
-                try:
-                    text_data = data.decode('utf-8')
-                    print(f"Received text data: {text_data[:100]}...")
-                    
-                    try:
-                        control_message = json.loads(text_data)
-                        message_type = control_message.get("type")
-                        
-                        if message_type == "config":
-                            # Get configuration parameters
-                            api_key = control_message.get("api_key", "")
-                            use_api = control_message.get("use_api", True)
-                            device = control_message.get("device", "auto")
-                            with_timestamps = control_message.get("with_timestamps", False)
-                            
-                            print(f"Config received: use_api={use_api}, device={device}")
-                            await manager.send_json(websocket, {"status": "config_received"})
-                            
-                        elif message_type == "end":
-                            print("End message received, processing complete audio")
-                            if audio_chunks:
-                                # Process complete audio
-                                with wave.open(audio_path, "wb") as wav_file:
-                                    wav_file.setnchannels(channels)
-                                    wav_file.setsampwidth(sample_width)
-                                    wav_file.setframerate(sample_rate)
-                                    wav_file.writeframes(b''.join(audio_chunks))
-                                
-                                if use_api:
-                                    if not api_key:
-                                        await manager.send_json(websocket, {"status": "error", "message": "API key is required for API mode"})
-                                    else:
-                                        result = transcribe_with_api(audio_path, api_key, with_timestamps=with_timestamps)
-                                        await manager.send_json(websocket, {"status": "complete", "result": result})
-                                else:  # Local model
-                                    if not TYPHOON_PACKAGE_AVAILABLE:
-                                        await manager.send_json(websocket, {"status": "error", "message": "typhoon-asr package is not installed"})
-                                    else:
-                                        result = transcribe_with_local_model(audio_path, device=device, with_timestamps=with_timestamps)
-                                        await manager.send_json(websocket, {"status": "complete", "result": result})
-                            break  # Exit the loop after processing
-                            
-                        else:
-                            print(f"Unknown message type: {message_type}")
-                            await manager.send_json(websocket, {"status": "error", "message": f"Unknown message type: {message_type}"})
-                    
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error: {e}")
-                        await manager.send_json(websocket, {"status": "error", "message": f"Invalid JSON: {str(e)}"})
-                
-                except UnicodeDecodeError:
-                    # Binary audio data
-                    audio_chunks.append(data)
-                    await manager.send_json(websocket, {"status": "chunk_received", "chunks": len(audio_chunks)})
-                    
-                    # Process interim audio every 10 chunks
-                    if len(audio_chunks) % 10 == 0:
-                        print(f"Processing interim audio ({len(audio_chunks)} chunks)")
-                        try:
-                            # Create temporary file for interim processing
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                                interim_path = tmp.name
-                            
-                            # Write current chunks to WAV
-                            with wave.open(interim_path, "wb") as wav_file:
-                                wav_file.setnchannels(channels)
-                                wav_file.setsampwidth(sample_width)
-                                wav_file.setframerate(sample_rate)
-                                wav_file.writeframes(b''.join(audio_chunks))
-                            
-                            # Process interim audio
-                            if use_api and api_key:
-                                result = transcribe_with_api(interim_path, api_key, with_timestamps=False)
-                                await manager.send_json(websocket, {"status": "interim", "result": result})
-                            elif not use_api and TYPHOON_PACKAGE_AVAILABLE:
-                                result = transcribe_with_local_model(interim_path, device=device, with_timestamps=False)
-                                await manager.send_json(websocket, {"status": "interim", "result": result})
-                        
-                        except Exception as e:
-                            print(f"Error processing interim audio: {e}")
-                        
-                        finally:
-                            # Clean up interim file
-                            if interim_path and os.path.exists(interim_path):
-                                try:
-                                    os.unlink(interim_path)
-                                    interim_path = None
-                                except:
-                                    pass
-            
-            except WebSocketDisconnect:
-                print("WebSocket disconnected")
-                break
-                
-            except Exception as e:
-                print(f"Error in WebSocket loop: {e}")
-                await manager.send_json(websocket, {"status": "error", "message": f"Server error: {str(e)}"})
-    
-    except WebSocketDisconnect:
-        print("WebSocket disconnected during setup")
-    
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-        try:
-            await manager.send_json(websocket, {"status": "error", "message": str(e)})
-        except:
-            pass
-    
-    finally:
-        # Clean up resources
-        if audio_path and os.path.exists(audio_path):
-            try:
-                os.unlink(audio_path)
-            except:
-                pass
-                
-        if interim_path and os.path.exists(interim_path):
-            try:
-                os.unlink(interim_path)
-            except:
-                pass
-                
-        # Disconnect from manager
-        try:
-            manager.disconnect(websocket)
-            print("WebSocket connection closed")
-        except:
-            pass
 
 # Generator function for streaming transcription
 def stream_transcription(audio_path: str, api_key: str = None, use_api: bool = True, 
