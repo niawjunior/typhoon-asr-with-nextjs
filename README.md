@@ -1,10 +1,15 @@
 
 # Typhoon ASR Demo
 
+<img width="1440" height="750" alt="image" src="https://github.com/user-attachments/assets/262c8f3f-91b8-496e-93cc-d60e93ef0f1c" />
+
+
 https://github.com/user-attachments/assets/1cd1e7fc-87ab-4cd1-8915-c0928bd1866c
 
 
 https://github.com/user-attachments/assets/14af2e52-b6bd-4e10-8c0a-c3fcacd17e0f
+<img width="1440" height="747" alt="image" src="https://github.com/user-attachments/assets/5918c6a1-13e7-4beb-aad0-994c5522d513" />
+
 
 
 
